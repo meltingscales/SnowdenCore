@@ -1,4 +1,6 @@
-Coldplay - Viva La Vida 
+- songs:
+  - Coldplay - Viva La Vida 
+  - cupcakke remix of viva la vida
 
 - todo:
   - snowden leaks sha256
