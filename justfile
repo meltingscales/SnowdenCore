@@ -45,13 +45,15 @@ count-pngs:
     @find "Snowden-PNGs" -type f -name "*.png" 2>/dev/null | wc -l || echo "0"
 
 # Generate video from MP3 and random PNG images
-# Usage: just generate-video JUMP_CUT_SECONDS SONG_NAME OUTPUT_VIDEO_NAME
+# Usage: just generate-video JUMP_CUT_SECONDS SONG_NAME OUTPUT_VIDEO_NAME [MOBILE_FORMAT]
 # Example: just generate-video 0.1 "./mp3/somefile.mp3" "./somevideo.mp4"
-generate-video JUMP_CUT_SECONDS SONG_NAME OUTPUT_VIDEO_NAME:
+# Example: just generate-video 0.1 "./mp3/somefile.mp3" "./mobile.mp4" true
+generate-video JUMP_CUT_SECONDS SONG_NAME OUTPUT_VIDEO_NAME MOBILE_FORMAT="false":
     cargo run --release --bin generate-video -- \
         --jump-cut-seconds {{JUMP_CUT_SECONDS}} \
         --song-path "{{SONG_NAME}}" \
-        --output-video "{{OUTPUT_VIDEO_NAME}}"
+        --output-video "{{OUTPUT_VIDEO_NAME}}" \
+        {{ if MOBILE_FORMAT == "true" { "--mobile-format" } else { "" } }}
 
 # Generate video with custom PNG directory
 # Usage: just generate-video-custom JUMP_CUT_SECONDS SONG_NAME OUTPUT_VIDEO_NAME PNG_DIR
