@@ -80,6 +80,31 @@ fn find_png_files(png_dir: &Path) -> Result<Vec<PathBuf>> {
     Ok(png_files)
 }
 
+fn validate_png_files(png_files: Vec<PathBuf>) -> Vec<PathBuf> {
+    println!("Validating {} PNG files...", png_files.len());
+    
+    let valid_files: Vec<PathBuf> = png_files
+        .par_iter()
+        .filter_map(|path| {
+            match image::open(path) {
+                Ok(_) => Some(path.clone()),
+                Err(_) => {
+                    println!("Filtering out corrupted PNG: {}", path.display());
+                    None
+                }
+            }
+        })
+        .collect();
+    
+    let filtered_count = png_files.len() - valid_files.len();
+    if filtered_count > 0 {
+        println!("Filtered out {} corrupted PNG files", filtered_count);
+    }
+    println!("Using {} valid PNG files for video generation", valid_files.len());
+    
+    valid_files
+}
+
 fn select_random_pngs(png_files: &[PathBuf], needed_count: usize) -> Vec<&PathBuf> {
     let mut rng = thread_rng();
     
@@ -212,29 +237,6 @@ struct FrameJob {
     mobile_format: bool,
 }
 
-fn process_frame_job(job: &FrameJob, temp_dir: &Path, width: u32, height: u32) -> Result<()> {
-    if job.mobile_format {
-        // Create stacked mobile frame
-        create_mobile_stacked_frame(&job.images, job.frame_number as u32, temp_dir)?;
-    } else {
-        // Desktop format - single image per frame
-        if let Some(png_path) = job.images.first() {
-            // Load and resize image - skip if corrupted
-            let resized = match image::open(png_path) {
-                Ok(img) => img.resize_exact(width, height, image::imageops::FilterType::Lanczos3),
-                Err(e) => {
-                    return Err(anyhow::anyhow!("Corrupted image {}: {}", png_path.display(), e));
-                }
-            };
-            
-            // Save frame
-            let frame_path = temp_dir.join(format!("frame_{:06}.png", job.frame_number));
-            resized.save(&frame_path)
-                .context("Failed to save frame")?;
-        }
-    }
-    Ok(())
-}
 
 fn create_video_precise_timing(
     png_files: Vec<PathBuf>,
@@ -285,30 +287,66 @@ fn create_video_precise_timing(
     
     println!("Processing {} frames in parallel...", frame_jobs.len());
     
-    // Process all frames in parallel
+    // Process all frames in parallel and collect successful results
     let temp_dir_arc = Arc::new(temp_dir.clone());
-    let results: Vec<Result<()>> = frame_jobs
+    let results: Vec<(usize, Result<PathBuf>)> = frame_jobs
         .par_iter()
         .enumerate()
         .map(|(i, job)| {
             if i % 100 == 0 {
                 println!("Processing batch starting at frame {}/{}", i + 1, frame_jobs.len());
             }
-            process_frame_job(job, &temp_dir_arc, width, height)
+            
+            let result = if job.mobile_format {
+                // Create stacked mobile frame
+                create_mobile_stacked_frame(&job.images, job.frame_number as u32, &temp_dir_arc)
+            } else {
+                // Desktop format - single image per frame
+                if let Some(png_path) = job.images.first() {
+                    // Load and resize image
+                    let resized = match image::open(png_path) {
+                        Ok(img) => img.resize_exact(width, height, image::imageops::FilterType::Lanczos3),
+                        Err(e) => {
+                            return (i, Err(anyhow::anyhow!("Corrupted image {}: {}", png_path.display(), e)));
+                        }
+                    };
+                    
+                    // Save frame with original frame number (will renumber later)
+                    let frame_path = temp_dir_arc.join(format!("temp_frame_{:06}.png", job.frame_number));
+                    match resized.save(&frame_path) {
+                        Ok(()) => Ok(frame_path),
+                        Err(e) => Err(anyhow::anyhow!("Failed to save frame: {}", e)),
+                    }
+                } else {
+                    Err(anyhow::anyhow!("No images provided for frame"))
+                }
+            };
+            
+            (i, result)
         })
         .collect();
     
-    // Check for any errors
-    let mut successful_frames = 0;
-    for (i, result) in results.iter().enumerate() {
+    // Collect successful frames and renumber them consecutively
+    let mut successful_frames = Vec::new();
+    for (original_index, result) in results {
         match result {
-            Ok(()) => successful_frames += 1,
-            Err(e) => println!("Warning: Frame {} failed: {}", i, e),
+            Ok(frame_path) => successful_frames.push((original_index, frame_path)),
+            Err(e) => println!("Warning: Frame {} failed: {}", original_index, e),
         }
     }
     
-    println!("Generated {} successful frames (was previously {}x more)", 
-             successful_frames, 
+    println!("Renumbering {} successful frames consecutively...", successful_frames.len());
+    
+    // Renumber successful frames to be consecutive (0, 1, 2, 3...)
+    for (new_index, (_original_index, old_path)) in successful_frames.iter().enumerate() {
+        let new_path = temp_dir.join(format!("frame_{:06}.png", new_index));
+        if let Err(e) = std::fs::rename(old_path, &new_path) {
+            println!("Warning: Failed to renumber frame {}: {}", new_index, e);
+        }
+    }
+    
+    println!("Generated {} consecutive frames (was previously {}x more)", 
+             successful_frames.len(), 
              (framerate as f64 * jump_cut_seconds).round() as u32);
     
     // Create ffmpeg command with precise timing using input framerate
@@ -372,10 +410,17 @@ fn main() -> Result<()> {
         return Err(anyhow::anyhow!("No PNG files found in {}", args.png_dir.display()));
     }
     
+    // Validate PNG files and filter out corrupted ones
+    let valid_png_files = validate_png_files(png_files);
+    
+    if valid_png_files.is_empty() {
+        return Err(anyhow::anyhow!("No valid PNG files found after filtering"));
+    }
+    
     // Create the video
     println!("Generating video...");
     create_video_precise_timing(
-        png_files,
+        valid_png_files,
         args.jump_cut_seconds,
         &args.song_path,
         &args.output_video,
