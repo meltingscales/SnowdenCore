@@ -62,3 +62,8 @@ generate-video-custom JUMP_CUT_SECONDS SONG_NAME OUTPUT_VIDEO_NAME PNG_DIR:
         --output-video "{{OUTPUT_VIDEO_NAME}}" \
         --png-dir "{{PNG_DIR}}"
 
+# Convert all MP4 files to MP3
+convert-mp4-to-mp3:
+    mkdir -p mp3
+    find ./mp4-source/ -name "*.mp4" -exec sh -c 'ffmpeg -i "$1" -q:a 0 -map a "mp3/$(basename "$1" .mp4).mp3"' _ {} \;
+

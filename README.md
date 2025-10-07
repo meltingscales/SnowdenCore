@@ -1,10 +1,9 @@
-- songs:
-  - Coldplay - Viva La Vida 
-  - cupcakke remix of viva la vida
+# #potaxie
 
-- todo:
-  - snowden leaks sha256
-  - pdf export to png
-  - 0.10 seconds per image
-  - random choice
-  - #potaxie
+    #potaxie
+
+## commands
+
+just generate-video 0.1 mp3/cupcakke.mp3 mp4/cupcakke.mp4
+just generate-video 0.1 mp3/coldplay.mp3 mp4/coldplay.mp4
+

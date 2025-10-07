@@ -3,8 +3,9 @@ use clap::Parser;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use walkdir::WalkDir;
+use std::fs::create_dir_all;
+use std::process::Command;
 
 #[derive(Parser, Debug)]
 #[command(name = "generate-video")]
@@ -91,57 +92,80 @@ fn select_random_pngs(png_files: &[PathBuf], needed_count: usize) -> Vec<&PathBu
     }
 }
 
-fn create_video_with_ffmpeg(
+fn create_video_precise_timing(
     selected_pngs: &[&PathBuf],
     jump_cut_seconds: f64,
     mp3_path: &Path,
     output_path: &Path,
     framerate: u32,
 ) -> Result<()> {
-    // Create a temporary file list for ffmpeg concat
-    let filelist_path = "temp_filelist.txt";
-    let mut filelist_content = String::new();
-    
-    for png_path in selected_pngs {
-        filelist_content.push_str(&format!(
-            "file '{}'\nduration {}\n",
-            png_path.display(),
-            jump_cut_seconds
-        ));
-    }
-    // Add the last image again with a short duration to ensure it shows
-    if let Some(last_png) = selected_pngs.last() {
-        filelist_content.push_str(&format!("file '{}'\n", last_png.display()));
-    }
-    
-    std::fs::write(filelist_path, filelist_content)
-        .context("Failed to write temporary filelist")?;
+    const WIDTH: u32 = 1280;
+    const HEIGHT: u32 = 720;
     
     println!("Creating video with {} images...", selected_pngs.len());
     
-    // Generate video using ffmpeg
+    // Calculate exact frames per image - this is the key to precise timing
+    let frames_per_image = (framerate as f64 * jump_cut_seconds).round() as u32;
+    println!("Frames per image: {} (for {:.3}s at {}fps)", frames_per_image, jump_cut_seconds, framerate);
+    
+    // Create temporary directory for frames
+    let temp_dir = PathBuf::from("temp_frames");
+    create_dir_all(&temp_dir)?;
+    
+    // Create a precise frame list
+    let mut frame_files = Vec::new();
+    let mut frame_number = 0;
+    
+    for (i, png_path) in selected_pngs.iter().enumerate() {
+        println!("Processing image {}/{}: {}", i + 1, selected_pngs.len(), png_path.display());
+        
+        // Load and resize image - skip if corrupted
+        let resized = match image::open(png_path) {
+            Ok(img) => img.resize_exact(WIDTH, HEIGHT, image::imageops::FilterType::Lanczos3),
+            Err(e) => {
+                println!("Warning: Skipping corrupted image {}: {}", png_path.display(), e);
+                continue;
+            }
+        };
+        
+        // Create exactly frames_per_image copies of this image
+        for _ in 0..frames_per_image {
+            let frame_path = temp_dir.join(format!("frame_{:06}.png", frame_number));
+            if let Err(e) = resized.save(&frame_path) {
+                println!("Warning: Failed to save frame {}: {}", frame_path.display(), e);
+                continue;
+            }
+            frame_files.push(frame_path);
+            frame_number += 1;
+        }
+    }
+    
+    println!("Generated {} total frames", frame_files.len());
+    
+    // Create ffmpeg command with precise timing
+    println!("Encoding video with ffmpeg...");
     let output = Command::new("ffmpeg")
         .arg("-y") // Overwrite output file
-        .arg("-f").arg("concat")
-        .arg("-safe").arg("0")
-        .arg("-i").arg(filelist_path)
+        .arg("-framerate").arg(framerate.to_string())
+        .arg("-i").arg(temp_dir.join("frame_%06d.png"))
         .arg("-i").arg(mp3_path)
-        .arg("-vf").arg(format!("fps={},scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2", framerate))
         .arg("-c:v").arg("libx264")
         .arg("-c:a").arg("aac")
-        .arg("-shortest") // Stop when shortest input ends
         .arg("-pix_fmt").arg("yuv420p")
+        .arg("-shortest") // Stop when shortest input ends
+        .arg("-r").arg(framerate.to_string()) // Output framerate
         .arg(output_path)
         .output()
         .context("Failed to run ffmpeg")?;
-    
-    // Clean up temporary file
-    std::fs::remove_file(filelist_path).ok();
     
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(anyhow::anyhow!("ffmpeg failed: {}", stderr));
     }
+    
+    // Clean up temporary frames
+    println!("Cleaning up temporary frames...");
+    std::fs::remove_dir_all(&temp_dir).ok();
     
     Ok(())
 }
@@ -195,7 +219,7 @@ fn main() -> Result<()> {
     
     // Create the video
     println!("Generating video...");
-    create_video_with_ffmpeg(
+    create_video_precise_timing(
         &selected_pngs,
         args.jump_cut_seconds,
         &args.song_path,
