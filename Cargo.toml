@@ -1,0 +1,16 @@
+[package]
+name = "snowdencore"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "extract"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4.0", features = ["derive"] }
+anyhow = "1.0"
+indicatif = "0.17"
+walkdir = "2.4"
+num_cpus = "1.16"
+rayon = "1.7"

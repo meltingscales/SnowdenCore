@@ -12,9 +12,9 @@ hash:
 validate:
     ./validate-hash.bash
 
-# Extract all PDF pages to PNG images
+# Extract all PDF pages to PNG images (Rust implementation with parallelization)
 extract:
-    uv run extract_pdfs.py
+    cargo run --release --bin extract
 
 # Clean generated files
 clean:
@@ -26,11 +26,10 @@ clean:
 clean-pngs:
     rm -rf Snowden-PNGs/
 
-# Setup: install system dependencies and Python packages
+# Setup: install system dependencies and build Rust binary
 setup:
-    @echo "Installing system dependencies..."
-    @echo "Note: You may need to run: sudo apt-get install poppler-utils"
-    uv sync
+    @echo "Building Rust binary..."
+    cargo build --release --bin extract
 
 # Run full workflow: validate archive, then extract PDFs
 run: validate extract

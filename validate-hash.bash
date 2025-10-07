@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Validate the integrity of Snowden archive files against hashes-merged.hash
 
 set -e

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # sha256 hash all files in ./Snowden archive/** to hashes-tmp.txt
 # hash the generated hash file to hashes-merged.hash
 # remove hashes-tmp.txt
