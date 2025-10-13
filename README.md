@@ -2,6 +2,10 @@
 
     #potaxie
 
+## really, what is this?
+
+if you have 3,000 random PNGs that you want to make into a music video...there u go
+
 ## commands
 
 ```bash
