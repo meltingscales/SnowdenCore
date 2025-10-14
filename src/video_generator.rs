@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 use std::path::{Path, PathBuf};
@@ -10,6 +10,12 @@ use std::collections::VecDeque;
 use image::GenericImageView;
 use rayon::prelude::*;
 use std::sync::Arc;
+
+#[derive(Debug, Clone, ValueEnum)]
+enum VideoFormat {
+    Desktop,
+    Mobile,
+}
 
 #[derive(Parser, Debug)]
 #[command(name = "generate-video")]
@@ -27,17 +33,17 @@ struct Args {
     #[arg(short = 'o', long)]
     output_video: PathBuf,
     
-    /// Directory containing PNG images
+    /// Directory containing image files (.png, .jpg, .jpeg)
     #[arg(long, default_value = "Snowden-PNGs")]
-    png_dir: PathBuf,
+    image_dir: PathBuf,
     
     /// Framerate for output video
     #[arg(long, default_value = "30")]
     framerate: u32,
     
-    /// Generate mobile-friendly video (9:16 aspect ratio with stacked images)
-    #[arg(long, default_value = "false")]
-    mobile_format: bool,
+    /// Video format: desktop (16:9) or mobile (9:16 with stacked images)
+    #[arg(long, value_enum)]
+    format: VideoFormat,
 }
 
 fn get_mp3_duration(mp3_path: &Path) -> Result<f64> {
@@ -64,66 +70,48 @@ fn get_mp3_duration(mp3_path: &Path) -> Result<f64> {
     Ok(duration)
 }
 
-fn find_png_files(png_dir: &Path) -> Result<Vec<PathBuf>> {
-    let mut png_files = Vec::new();
+fn find_image_files(image_dir: &Path) -> Result<Vec<PathBuf>> {
+    let mut image_files = Vec::new();
     
-    for entry in WalkDir::new(png_dir).into_iter().filter_map(|e| e.ok()) {
+    for entry in WalkDir::new(image_dir).into_iter().filter_map(|e| e.ok()) {
         if entry.file_type().is_file() {
             if let Some(extension) = entry.path().extension() {
-                if extension.to_string_lossy().to_lowercase() == "png" {
-                    png_files.push(entry.path().to_path_buf());
+                let ext = extension.to_string_lossy().to_lowercase();
+                if ext == "png" || ext == "jpg" || ext == "jpeg" {
+                    image_files.push(entry.path().to_path_buf());
                 }
             }
         }
     }
     
-    Ok(png_files)
+    Ok(image_files)
 }
 
-fn validate_png_files(png_files: Vec<PathBuf>) -> Vec<PathBuf> {
-    println!("Validating {} PNG files...", png_files.len());
+fn validate_image_files(image_files: Vec<PathBuf>) -> Vec<PathBuf> {
+    println!("Validating {} image files...", image_files.len());
     
-    let valid_files: Vec<PathBuf> = png_files
+    let valid_files: Vec<PathBuf> = image_files
         .par_iter()
         .filter_map(|path| {
             match image::open(path) {
                 Ok(_) => Some(path.clone()),
                 Err(_) => {
-                    println!("Filtering out corrupted PNG: {}", path.display());
+                    println!("Filtering out corrupted image: {}", path.display());
                     None
                 }
             }
         })
         .collect();
     
-    let filtered_count = png_files.len() - valid_files.len();
+    let filtered_count = image_files.len() - valid_files.len();
     if filtered_count > 0 {
-        println!("Filtered out {} corrupted PNG files", filtered_count);
+        println!("Filtered out {} corrupted image files", filtered_count);
     }
-    println!("Using {} valid PNG files for video generation", valid_files.len());
+    println!("Using {} valid image files for video generation", valid_files.len());
     
     valid_files
 }
 
-fn select_random_pngs(png_files: &[PathBuf], needed_count: usize) -> Vec<&PathBuf> {
-    let mut rng = thread_rng();
-    
-    if png_files.len() >= needed_count {
-        // If we have enough unique PNGs, sample without replacement
-        let mut selected: Vec<&PathBuf> = png_files.iter().collect();
-        selected.shuffle(&mut rng);
-        selected.into_iter().take(needed_count).collect()
-    } else {
-        // If we don't have enough unique PNGs, repeat them
-        let mut selected = Vec::with_capacity(needed_count);
-        for i in 0..needed_count {
-            let index = i % png_files.len();
-            selected.push(&png_files[index]);
-        }
-        selected.shuffle(&mut rng);
-        selected
-    }
-}
 
 struct CircularImageQueue {
     images: VecDeque<PathBuf>,
@@ -234,30 +222,30 @@ fn create_mobile_stacked_frame(images: &[PathBuf], frame_number: u32, temp_dir: 
 struct FrameJob {
     frame_number: usize,
     images: Vec<PathBuf>,
-    mobile_format: bool,
+    format: VideoFormat,
 }
 
 
 fn create_video_precise_timing(
-    png_files: Vec<PathBuf>,
+    image_files: Vec<PathBuf>,
     jump_cut_seconds: f64,
     mp3_path: &Path,
     output_path: &Path,
     framerate: u32,
-    mobile_format: bool,
+    format: VideoFormat,
     mp3_duration: f64,
 ) -> Result<()> {
-    let (width, height) = if mobile_format {
-        (1080u32, 1920u32)
-    } else {
-        (1280u32, 720u32)
+    let (width, height) = match format {
+        VideoFormat::Mobile => (1080u32, 1920u32),
+        VideoFormat::Desktop => (1280u32, 720u32),
     };
     
-    println!("Creating {} video...", if mobile_format { "mobile (9:16)" } else { "desktop (16:9)" });
+    let is_mobile = matches!(format, VideoFormat::Mobile);
+    println!("Creating {} video...", if is_mobile { "mobile (9:16)" } else { "desktop (16:9)" });
     
     // Calculate unique frames needed (no duplicates)
     let unique_frames_needed = (mp3_duration / jump_cut_seconds).ceil() as usize;
-    let images_per_frame = if mobile_format { 3 } else { 1 };
+    let images_per_frame = if is_mobile { 3 } else { 1 };
     
     // Input framerate = 1/jump_cut_seconds (each frame shows for jump_cut_seconds)
     let input_framerate = 1.0 / jump_cut_seconds;
@@ -271,7 +259,7 @@ fn create_video_precise_timing(
     create_dir_all(&temp_dir)?;
     
     // Initialize circular queue for image reuse and collect all frame jobs
-    let mut image_queue = CircularImageQueue::new(png_files);
+    let mut image_queue = CircularImageQueue::new(image_files);
     let mut frame_jobs = Vec::with_capacity(unique_frames_needed);
     
     println!("Collecting frame jobs...");
@@ -281,7 +269,7 @@ fn create_video_precise_timing(
         frame_jobs.push(FrameJob {
             frame_number: frame_index,
             images: frame_images,
-            mobile_format,
+            format: format.clone(),
         });
     }
     
@@ -297,7 +285,7 @@ fn create_video_precise_timing(
                 println!("Processing batch starting at frame {}/{}", i + 1, frame_jobs.len());
             }
             
-            let result = if job.mobile_format {
+            let result = if matches!(job.format, VideoFormat::Mobile) {
                 // Create stacked mobile frame
                 create_mobile_stacked_frame(&job.images, job.frame_number as u32, &temp_dir_arc)
             } else {
@@ -391,9 +379,9 @@ fn main() -> Result<()> {
         return Err(anyhow::anyhow!("MP3 file not found: {}", args.song_path.display()));
     }
     
-    // Check if PNG directory exists
-    if !args.png_dir.exists() {
-        return Err(anyhow::anyhow!("PNG directory not found: {}", args.png_dir.display()));
+    // Check if image directory exists
+    if !args.image_dir.exists() {
+        return Err(anyhow::anyhow!("Image directory not found: {}", args.image_dir.display()));
     }
     
     // Get MP3 duration
@@ -401,31 +389,31 @@ fn main() -> Result<()> {
     let mp3_duration = get_mp3_duration(&args.song_path)?;
     println!("MP3 duration: {:.2} seconds", mp3_duration);
     
-    // Find all PNG files
-    println!("Finding PNG files...");
-    let png_files = find_png_files(&args.png_dir)?;
-    println!("Found {} PNG files", png_files.len());
+    // Find all image files
+    println!("Finding image files...");
+    let image_files = find_image_files(&args.image_dir)?;
+    println!("Found {} image files", image_files.len());
     
-    if png_files.is_empty() {
-        return Err(anyhow::anyhow!("No PNG files found in {}", args.png_dir.display()));
+    if image_files.is_empty() {
+        return Err(anyhow::anyhow!("No image files found in {}", args.image_dir.display()));
     }
     
-    // Validate PNG files and filter out corrupted ones
-    let valid_png_files = validate_png_files(png_files);
+    // Validate image files and filter out corrupted ones
+    let valid_image_files = validate_image_files(image_files);
     
-    if valid_png_files.is_empty() {
-        return Err(anyhow::anyhow!("No valid PNG files found after filtering"));
+    if valid_image_files.is_empty() {
+        return Err(anyhow::anyhow!("No valid image files found after filtering"));
     }
     
     // Create the video
     println!("Generating video...");
     create_video_precise_timing(
-        valid_png_files,
+        valid_image_files,
         args.jump_cut_seconds,
         &args.song_path,
         &args.output_video,
         args.framerate,
-        args.mobile_format,
+        args.format,
         mp3_duration,
     )?;
     

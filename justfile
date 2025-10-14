@@ -44,25 +44,29 @@ count-pngs:
     @echo "PNG files extracted:"
     @find "Snowden-PNGs" -type f -name "*.png" 2>/dev/null | wc -l || echo "0"
 
-# Generate video from MP3 and random PNG images
-# Usage: just generate-video JUMP_CUT_SECONDS SONG_NAME OUTPUT_VIDEO_NAME [MOBILE_FORMAT]
-# Example: just generate-video 0.1 "./mp3/somefile.mp3" "./somevideo.mp4"
-# Example: just generate-video 0.1 "./mp3/somefile.mp3" "./mobile.mp4" true
-generate-video JUMP_CUT_SECONDS SONG_NAME OUTPUT_VIDEO_NAME MOBILE_FORMAT="false":
+# Generate video from MP3 and random images from Snowden-PNGs directory (supports .png and .jpg)
+# Usage: just generate-video JUMP_CUT_SECONDS SONG_NAME OUTPUT_VIDEO_NAME FORMAT
+# Example: just generate-video 0.1 "./mp3/somefile.mp3" "./somevideo.mp4" desktop
+# Example: just generate-video 0.1 "./mp3/somefile.mp3" "./mobile.mp4" mobile
+generate-video JUMP_CUT_SECONDS SONG_NAME OUTPUT_VIDEO_NAME FORMAT:
     cargo run --release --bin generate-video -- \
         --jump-cut-seconds {{JUMP_CUT_SECONDS}} \
         --song-path "{{SONG_NAME}}" \
         --output-video "{{OUTPUT_VIDEO_NAME}}" \
-        {{ if MOBILE_FORMAT == "true" { "--mobile-format" } else { "" } }}
+        --image-dir "Snowden-PNGs" \
+        --format {{FORMAT}}
 
-# Generate video with custom PNG directory
-# Usage: just generate-video-custom JUMP_CUT_SECONDS SONG_NAME OUTPUT_VIDEO_NAME PNG_DIR
-generate-video-custom JUMP_CUT_SECONDS SONG_NAME OUTPUT_VIDEO_NAME PNG_DIR:
+# Generate video with custom image directory (supports .png and .jpg files)
+# Usage: just generate-video-custom JUMP_CUT_SECONDS SONG_NAME OUTPUT_VIDEO_NAME IMAGE_DIR FORMAT
+# Example: just generate-video-custom 0.1 "./mp3/somefile.mp3" "./somevideo.mp4" "./my-images/" desktop
+# Example: just generate-video-custom 0.1 "./mp3/somefile.mp3" "./mobile.mp4" "./my-images/" mobile
+generate-video-custom JUMP_CUT_SECONDS SONG_NAME OUTPUT_VIDEO_NAME IMAGE_DIR FORMAT:
     cargo run --release --bin generate-video -- \
         --jump-cut-seconds {{JUMP_CUT_SECONDS}} \
         --song-path "{{SONG_NAME}}" \
         --output-video "{{OUTPUT_VIDEO_NAME}}" \
-        --png-dir "{{PNG_DIR}}"
+        --image-dir "{{IMAGE_DIR}}" \
+        --format {{FORMAT}}
 
 # Convert all MP4 files to MP3
 convert-mp4-to-mp3:
